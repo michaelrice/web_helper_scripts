@@ -1,0 +1,99 @@
+#!/bin/bash
+
+while getopts ":a:p:s:zh" opt; do
+  case $opt in
+    a)
+        site_alias=$OPTARG
+      ;;
+    p)
+        port=$OPTARG
+      ;;
+    s)
+        site=$OPTARG
+      ;;
+    z)
+        zend_site=1
+      ;;
+    h)
+        usage
+        exit
+      ;;
+    \?)
+      echo "Invalid option: -$OPTARG" >&2
+      exit 1
+      ;;
+    :)
+      echo "Option -$OPTARG requires an argument." >&2
+      exit 1
+      ;;
+  esac
+done
+
+port=${port:-80}
+zend_site=${zend_site:-2}
+zend_conf=""
+
+if [ ${zend_site} -eq "1" ];
+then
+    zend_conf=$(cat << T
+RewriteEngine on
+        RewriteCond %{REQUEST_FILENAME} !-f
+        RewriteCond %{REQUEST_FILENAME} !-d
+        RewriteRule !\.(js|ico|gif|jpg|png|css)$ /index.php
+T
+)
+fi
+
+function usage() {
+    echo "Usage:"
+    echo "$0 -s mysite.com -a www.mysite.com mysite.net www.mysite.net -z"
+    echo "    -s Required. Name of the site: site.com"
+    echo "    -p Optional. Port for the Virtual Host, if not set it defaults to 80"
+    echo "    -a Optional. Enter an alias for the site, space seperated: www.site.com foo.site.com blog.site.com"
+    echo "    -z Optional. Set this flag if the site is a PHP ZendFramework site. Defaults to false"
+    echo "    -h This help message"
+    exit
+}
+
+if [ -z ${site} ]; then
+    usage
+fi
+
+CONFNAME=/etc/apache2/sites-available/${site}
+LOGDIR=/var/log/apache2/${site}
+
+mkdir -p ${LOGDIR}
+mkdir -p /var/www/sites/${site}/html
+touch ${LOGDIR}/{access,error}.log
+chown -R www-data:www-data ${LOGDIR}
+chown -R www-data:www-data /var/www/sites/${site}
+chmod -R 775 /var/www/sites/${site}
+chmod -R g+s /var/www/sites/${site}
+
+cat << EOF > ${CONFNAME}
+<VirtualHost *:${port}>
+    ServerAdmin webmaster@toastcoders.com
+    ServerName ${site}
+    ServerAlias ${site_alias} 
+    DocumentRoot /var/www/sites/${site}/html
+    ErrorDocument 404 /index.php?error=404
+    <Directory />
+        Options FollowSymLinks
+        AllowOverride None
+    </Directory>
+    <Directory /var/www/sites/${site}/html>
+        Options -Indexes FollowSymLinks MultiViews
+        ${zend_conf}
+        AllowOverride None
+        Order allow,deny
+        allow from all
+    </Directory>
+    ErrorLog /var/log/apache2/${site}/error.log
+    LogLevel warn
+    CustomLog /var/log/apache2/${site}/access.log combined
+</VirtualHost>
+EOF
+
+a2ensite ${site}
+
+echo "You also need to add files to the document root: /var/www/sites/${site}/html"
